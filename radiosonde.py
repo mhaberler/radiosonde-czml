@@ -6,7 +6,7 @@
 import json
 import gpxpy
 import datetime
-#from datetime import datetime, timedelta, timezone, date.fromisoformat
+# from datetime import datetime, timedelta, timezone, date.fromisoformat
 import logging as log
 import sys
 import argparse as mod_argparse
@@ -38,6 +38,8 @@ from czml3.properties import (
     PolylineDashMaterial,
     PolylineMaterial
 )
+
+DEFAULT_MODEL = "https://static.mah.priv.at/cors/OE-SOX.glb"
 
 
 class BoundingBox(object):
@@ -156,6 +158,8 @@ class SondeObservations(object):
         self.bbox = bbox
         self.after = after
         self.before = before
+        self.first_seen = datetime.datetime.max
+        self.last_seen = datetime.datetime.min
 
     def _read_json(self, files):
         p = dict()
@@ -170,7 +174,12 @@ class SondeObservations(object):
                     log.error(f"file: {filename} {e}")
         return p
 
-    def gen_czml(self):
+    def select_vehicles(self):
+        """
+        by time and bounding box
+        returns a dict {vehicle_name, position_list}
+
+        """
         poslist = self.habhub_positions['positions']['position']
         vehicles = dict()
 
@@ -182,7 +191,16 @@ class SondeObservations(object):
         for p in poslist:
             if self.bbox.habhub_pos_in_bbox(p):
                 if 'gps_time' in p:
-                    gps_time = datetime.datetime.strptime(p['gps_time'], '%Y-%m-%d %H:%M:%S')
+                    gps_time = datetime.datetime.strptime(
+                        p['gps_time'], '%Y-%m-%d %H:%M:%S')
+                    p['parsed_time'] = gps_time
+
+                    # collect timespan(min,max) of all samples
+                    if self.last_seen < gps_time:
+                        self.last_seen = gps_time
+                    if self.first_seen > gps_time:
+                        self.first_seen = gps_time
+
                     if gps_time < self.after or gps_time > self.before:
                         continue
                 vehicles[p['vehicle']].append(p)
@@ -191,9 +209,106 @@ class SondeObservations(object):
             l = len(poslist)
             if l > 0:
                 log.debug(f"vehicle {v} positions {l}")
+        return vehicles
 
+    def gen_position_list(self, plist):
+        """ """
+        results = []
+        for p in plist:
+            results.append(format_datetime_like(p['parsed_time']))
+            results.extend([float(p["gps_lon"]),
+                            float(p["gps_lat"]),
+                            float(p["gps_alt"])])
+        return results
 
-#  ./radiosonde.py --bbox  10 20 42 48  -d --habhub-data positions.json foo.json
+    def gen_habhub_vehicle_track(self, v, poslist, model):
+
+        results = []
+        start = datetime.datetime.max
+        stop = datetime.datetime.min
+        for p in poslist:
+            t = p['parsed_time']
+            if stop < t:
+                stop = t
+            if start > t:
+                start = t
+            results.append(format_datetime_like(t))
+            results.extend([float(p["gps_lon"]),
+                            float(p["gps_lat"]),
+                            float(p["gps_alt"])])
+        availability = TimeInterval(start=start, end=stop)
+
+        pl = self.gen_position_list(poslist)
+        #log.debug(f"vehicle={v} pl={pl}") #" poslist={poslist}")
+        # log.debug(f"vehicle={v}")
+        # lb = Label(text=packetname,
+        #            show=True,
+        #            scale=0.5,
+        #            pixelOffset={'cartesian2': [50, -30]})
+        position = Position(#interpolationDegree=3,
+                            cartographicDegrees=pl)
+        # interpolationAlgorithm="LAGRANGE",
+        # interpolationAlgorithm="LINEAR",
+        # epoch=self.starttime(),
+
+        red = Color(rgba=[255, 0, 0, 255])
+        grn = Color(rgba=[0, 255, 0, 255])
+        po = PolylineOutlineMaterial(color=red,
+                                     outlineColor=grn,
+                                     outlineWidth=4)
+        path = Path(material=Material(polylineOutline=po),
+                    width=6,
+                    leadTime=0,
+                    trailTime=100000,
+                    resolution=5)
+
+        p = Packet(id=v,
+                   # description="der flug",
+                   # name=packetname,
+                   position=position,
+                   # label=lb,
+                   path=path,
+                   # reference does not work here 
+                   model=model, #"balloon_model#model",
+                   viewFrom=ViewFrom(cartesian=Cartesian3Value(
+                       values=[-1000, 0, 300])),
+                   availability=availability)
+
+        return p
+
+    def gen_czml(self):
+        gltf = DEFAULT_MODEL
+        model = Model(gltf=gltf,
+                      scale=1.0,
+                      minimumPixelSize=64)
+
+        #p =  Packet(id="balloon_model",  model=model)
+        #packets = [p]
+        packets = []
+        vehicles = self.select_vehicles()
+        for v, poslist in vehicles.items():
+            if len(poslist) > 0:
+                packets.append(self.gen_habhub_vehicle_track(v, poslist, model))
+        return packets
+
+def prolog(name, mintime, maxtime):
+
+    clock = None
+    if maxtime > mintime:
+        multiplier = 7200
+        range = 'CLAMPED'
+        step = 'SYSTEM_CLOCK_MULTIPLIER'
+        start = mintime
+        clock = IntervalValue(start=mintime,
+                              end=maxtime,
+                              value=Clock(currentTime=start, multiplier=multiplier))
+
+    preamble = Preamble(name='document',
+                        description='document description from prolog',
+                        clock=clock)
+    return preamble
+
+#  ./radiosonde.py --bbox  10 20 42 48  -d --after 2020-12-23 --before 2020-12-24 --habhub-data positions.json foo.json
 #  curl --max-time 600 --output positions.json 'https://spacenear.us/tracker/datanew.php?mode=6hours&type=positions&format=json&max_positions=0'
 
 def main():
@@ -272,7 +387,11 @@ def main():
                            after=args.after,
                            before=args.before)
 
-    so.gen_czml()
+    packets = so.gen_czml()
+    preamble = prolog("habhub", so.first_seen, so.last_seen)
+    packets.insert(0, preamble)
+    document = Document(packets)
+    print(document.dumps(indent=4))
 
     sys.exit(0)
 
