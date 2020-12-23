@@ -1,5 +1,10 @@
+#!/usr/bin/env python
+
+# python habhub.py --bbox  14.5 16.8 46 47.5  -d --habhub-data positions.json foo.json
+
+
 import json
-import gpxpy.gpx as mod_gpx
+import gpxpy
 from datetime import datetime, timedelta, timezone
 import logging as log
 import sys
@@ -37,17 +42,21 @@ from czml3.properties import (
 class BoundingBox(object):
     def __init__(self,
                  coord_list=[0, 360, -90, 90],  # minlon maxlon minlat maxlat
-                 height_range=[0, 100000]):
-
-        self.min_lon = coord_list[0]
-        self.max_lon = coord_list[1]
-        self.min_lat = coord_list[2]
-        self.max_lat = coord_list[3]
-        self.min_ele = height_range[0]
-        self.max_ele = height_range[1]
+                 height_range=[0, 100000],
+                 gpxpy_track=None):
+        self.track = gpxpy_track
+        if self.track:
+            self._set_from_gpxpy_track(self.track)
+        else:
+            self.min_lon = coord_list[0]
+            self.max_lon = coord_list[1]
+            self.min_lat = coord_list[2]
+            self.max_lat = coord_list[3]
+            self.min_ele = height_range[0]
+            self.max_ele = height_range[1]
 
     def __str__(self) -> str:
-        return f'bbox lon: {self.min_lon}..{self.max_lon}, lat: {self.min_lat}..{self.max_lat}, ele: {self.min_ele}..{self.max_ele}'
+        return f'bbox(lon: {self.min_lon}..{self.max_lon}, lat: {self.min_lat}..{self.max_lat}, ele: {self.min_ele}..{self.max_ele})'
 
     def habhub_pos_in_bbox(self, p):
         """
@@ -81,6 +90,39 @@ class BoundingBox(object):
         lon = p["gps_lon"]
         ele = p["gps_alt"]
         return (ele >= self.min_ele and ele <= self.max_ele and lat >= self.min_lat and lat <= self.max_lat and lon >= self.min_lon and lon <= self.max_lon)
+
+    def _set_from_gpxpy_track(self, track):
+        """
+        return bounding box of a list of gpxpy points
+        """
+        min_lat = None
+        max_lat = None
+        min_lon = None
+        max_lon = None
+        min_ele = 100000
+        max_ele = -100000
+
+        for (point, segment, point_no) in self.track.walk():
+            if min_lat is None or point.latitude < min_lat:
+                min_lat = point.latitude
+            if max_lat is None or point.latitude > max_lat:
+                max_lat = point.latitude
+            if min_lon is None or point.longitude < min_lon:
+                min_lon = point.longitude
+            if max_lon is None or point.longitude > max_lon:
+                max_lon = point.longitude
+            if min_ele is None or point.elevation < min_ele:
+                min_ele = point.elevation
+            if max_ele is None or point.elevation > max_ele:
+                max_ele = point.elevation
+
+        if min_lat and max_lat and min_lon and max_lon:
+            self.min_lat = min_lat
+            self.max_lat = max_lat
+            self.min_lon = min_lon
+            self.max_lon = max_lon
+        self.min_ele = min_ele
+        self.max_ele = max_ele
 
 
 
@@ -204,6 +246,18 @@ def main():
     log.debug(f"bbox={bbox}")
 
     positions = read_positions(args.hh_files, bbox=None)
+
+    fn = "Stiwoll-Muggauberg.gpx"
+    with open(fn, 'r') as gpx_file:
+            gpx = gpxpy.parse(gpx_file)
+            for t in gpx.tracks:
+                bbox = BoundingBox(gpxpy_track=t)
+                log.debug(f"fn={fn} bbox={bbox}")
+
+
+
+
+
     sys.exit(0)
 
     with open("foo.json", "r") as jsonfile:
