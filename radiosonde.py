@@ -125,8 +125,7 @@ class BoundingBox(object):
         self.max_ele = max_ele
 
 
-
-class SondeObservation(object):
+class SondeObservations(object):
     _serial = count(0)
 
     def __init__(self,
@@ -135,7 +134,23 @@ class SondeObservation(object):
                  bbox=None,
                  start_time=None,
                  end_time=None):
-        pass
+        self.habhub_positions = self._read_json(habhub_tracks)
+        self.habhub_receivers = self._read_json(habhub_receivers)
+        self.bbox = bbox
+        self.start_time = start_time
+        self.end_time = end_time
+
+    def _read_json(self, files):
+        p = []
+        for filename in files:
+            with open(filename, 'rb') as fp:
+                try:
+                    log.debug(f"doing {filename}")
+                    js = json.loads(fp.read().decode('utf8'))
+                    p.append(js)
+                except Exception as e:
+                    log.error(f"file: {filename} {e}")
+        return p
 
     def gen_czml(self):
         pass
@@ -175,20 +190,6 @@ def get_bounds(points):
                 'min_elevation': min_ele, 'max_elevation': max_ele,
                 }
     return None
-
-
-def read_positions(files, bbox=None):
-    log.debug(f"{files}")
-
-    p = []
-    for filename in files:
-        with open(filename, 'rb') as fp:
-            try:
-                log.debug(f"doing {filename}")
-                js = json.loads(fp.read().decode('utf8'))
-                p.append(js)
-            except Exception as e:
-                log.error(f"file: {filename} {e}")
 
 
 def main():
@@ -245,18 +246,17 @@ def main():
     bbox = BoundingBox(coord_list=args.bbox, height_range=args.height_range)
     log.debug(f"bbox={bbox}")
 
-    positions = read_positions(args.hh_files, bbox=None)
+    so = SondeObservations(habhub_tracks=args.hh_files,
+                           habhub_receivers=args.hh_reivers,
+                           bbox=bbox)
 
-    fn = "Stiwoll-Muggauberg.gpx"
-    with open(fn, 'r') as gpx_file:
+    if False:
+        fn = "Stiwoll-Muggauberg.gpx"
+        with open(fn, 'r') as gpx_file:
             gpx = gpxpy.parse(gpx_file)
             for t in gpx.tracks:
                 bbox = BoundingBox(gpxpy_track=t)
                 log.debug(f"fn={fn} bbox={bbox}")
-
-
-
-
 
     sys.exit(0)
 
