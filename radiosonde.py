@@ -61,7 +61,6 @@ class BoundingBox(object):
     def within_box(self, lat, lon, ele):
         return (ele >= self.min_ele and ele <= self.max_ele and lat >= self.min_lat and lat <= self.max_lat and lon >= self.min_lon and lon <= self.max_lon)
 
-
     def habhub_receiver_in_bbox(self, p):
         """
         match a habhub receiver
@@ -76,8 +75,7 @@ class BoundingBox(object):
             "description": "\n<font size=\"-2\"><BR>\n<B>Radio: </B>Yaesu FT-991A<BR>\n<B>Antenna: </B>Diamond V2000<BR>\n<B>Last Contact: </B>0 hours ago<BR>\n</font>\n"
         }
         """
-        return self.within_box(float(p["lat"]),float(p["lon"]), float(p["alt"]))
-
+        return self.within_box(float(p["lat"]), float(p["lon"]), float(p["alt"]))
 
     def habhub_pos_in_bbox(self, p):
         """
@@ -107,7 +105,7 @@ class BoundingBox(object):
                 "sequence": "7673"
               }
         """
-        return self.within_box(float(p["gps_lat"]),float(p["gps_lon"]), float(p["gps_alt"]))
+        return self.within_box(float(p["gps_lat"]), float(p["gps_lon"]), float(p["gps_alt"]))
 
     def _set_from_gpxpy_track(self, track):
         """
@@ -165,7 +163,7 @@ class SondeObservations(object):
                 try:
                     log.debug(f"doing {filename}")
                     js = json.loads(fp.read().decode('utf8'))
-                    #p.append(js)
+                    # p.append(js)
                     p = {**p, **js}
                 except Exception as e:
                     log.error(f"file: {filename} {e}")
@@ -185,10 +183,9 @@ class SondeObservations(object):
                 vehicles[p['vehicle']].append(p)
 
         for v, poslist in vehicles.items():
-            l =  len(poslist)
+            l = len(poslist)
             if l > 0:
                 log.debug(f"vehicle {v} positions {l}")
-
 
 
 #  ./radiosonde.py --bbox  10 20 42 48  -d --habhub-data positions.json foo.json
@@ -236,6 +233,16 @@ def main():
                         metavar=('LOWER_BOUNDARY', 'UPPER_BOUNDARY'),
                         help='lower and upper boundary. example: --height-range 0 6000')
 
+    parser.add_argument('--from',
+                        type=datetime.date.fromisoformat,
+                        metavar='DATE',
+                        help='export positions sampled after DATE (must be in ISO format)')
+
+    parser.add_argument('--to',
+                        type=datetime.date.fromisoformat,
+                        metavar='DATE',
+                        help='export positions sampled before DATE (must be in ISO format)')
+
     args, files = parser.parse_known_args()
 
     global debug
@@ -254,30 +261,13 @@ def main():
 
     so = SondeObservations(habhub_tracks=args.hh_files,
                            habhub_receivers=args.hh_reivers,
-                           bbox=bbox)
+                           bbox=bbox,
+                           start_time=args.from,
+                           end_time=args.to)
 
     so.gen_czml()
 
     sys.exit(0)
-
-    with open("foo.json", "r") as jsonfile:
-        j = json.load(jsonfile)
-
-    poslist = j['positions']['position']
-
-    vehicles = dict()
-
-    # collect vehicles
-    for p in poslist:
-        vehicles[p['vehicle']] = []
-
-    # collate positions
-    # do a bbox here
-    for p in poslist:
-        vehicles[p['vehicle']].append(p)
-
-    for v, poslist in vehicles.items():
-        print(len(poslist), v)
 
     # tv = vehicles['RS_R3341161']
     #
@@ -290,6 +280,7 @@ def main():
     #         for t in gpx.tracks:
     #             bbox = BoundingBox(gpxpy_track=t)
     #             log.debug(f"fn={fn} bbox={bbox}")
+
 
 if __name__ == "__main__":
     main()
