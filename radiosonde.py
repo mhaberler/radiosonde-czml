@@ -5,7 +5,8 @@
 
 import json
 import gpxpy
-from datetime import datetime, timedelta, timezone
+import datetime
+#from datetime import datetime, timedelta, timezone, date.fromisoformat
 import logging as log
 import sys
 import argparse as mod_argparse
@@ -148,13 +149,13 @@ class SondeObservations(object):
                  habhub_tracks=[],
                  habhub_receivers=[],
                  bbox=None,
-                 start_time=None,
-                 end_time=None):
+                 after=None,
+                 before=None):
         self.habhub_positions = self._read_json(habhub_tracks)
         self.habhub_receivers = self._read_json(habhub_receivers)
         self.bbox = bbox
-        self.start_time = start_time
-        self.end_time = end_time
+        self.after = after
+        self.before = before
 
     def _read_json(self, files):
         p = dict()
@@ -180,6 +181,10 @@ class SondeObservations(object):
         # collate positions
         for p in poslist:
             if self.bbox.habhub_pos_in_bbox(p):
+                if 'gps_time' in p:
+                    gps_time = datetime.datetime.strptime(p['gps_time'], '%Y-%m-%d %H:%M:%S')
+                    if gps_time < self.after or gps_time > self.before:
+                        continue
                 vehicles[p['vehicle']].append(p)
 
         for v, poslist in vehicles.items():
@@ -233,14 +238,16 @@ def main():
                         metavar=('LOWER_BOUNDARY', 'UPPER_BOUNDARY'),
                         help='lower and upper boundary. example: --height-range 0 6000')
 
-    parser.add_argument('--from',
-                        type=datetime.date.fromisoformat,
+    parser.add_argument('--after',
+                        type=datetime.datetime.fromisoformat,
                         metavar='DATE',
+                        default=datetime.datetime.min,
                         help='export positions sampled after DATE (must be in ISO format)')
 
-    parser.add_argument('--to',
-                        type=datetime.date.fromisoformat,
+    parser.add_argument('--before',
+                        type=datetime.datetime.fromisoformat,
                         metavar='DATE',
+                        default=datetime.datetime.max,
                         help='export positions sampled before DATE (must be in ISO format)')
 
     args, files = parser.parse_known_args()
@@ -262,8 +269,8 @@ def main():
     so = SondeObservations(habhub_tracks=args.hh_files,
                            habhub_receivers=args.hh_reivers,
                            bbox=bbox,
-                           start_time=args.from,
-                           end_time=args.to)
+                           after=args.after,
+                           before=args.before)
 
     so.gen_czml()
 
