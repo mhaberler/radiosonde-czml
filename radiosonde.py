@@ -58,6 +58,27 @@ class BoundingBox(object):
     def __str__(self) -> str:
         return f'bbox(lon: {self.min_lon}..{self.max_lon}, lat: {self.min_lat}..{self.max_lat}, ele: {self.min_ele}..{self.max_ele})'
 
+    def within_box(self, lat, lon, ele):
+        return (ele >= self.min_ele and ele <= self.max_ele and lat >= self.min_lat and lat <= self.max_lat and lon >= self.min_lon and lon <= self.max_lon)
+
+
+    def habhub_receiver_in_bbox(self, p):
+        """
+        match a habhub receiver
+        return True if within bbox
+        example:
+        {
+            "name": "SQ5SKB",
+            "tdiff_hours": 0,
+            "lon": 20.849021,
+            "lat": 51.979377,
+            "alt": 137,
+            "description": "\n<font size=\"-2\"><BR>\n<B>Radio: </B>Yaesu FT-991A<BR>\n<B>Antenna: </B>Diamond V2000<BR>\n<B>Last Contact: </B>0 hours ago<BR>\n</font>\n"
+        }
+        """
+        return self.within_box(float(p["lat"]),float(p["lon"]), float(p["alt"]))
+
+
     def habhub_pos_in_bbox(self, p):
         """
         match a hubhub position sample
@@ -84,12 +105,9 @@ class BoundingBox(object):
                 },
                 "callsign": "VK5HS_AUTO_RX",
                 "sequence": "7673"
-              },
+              }
         """
-        lat = p["gps_lat"]
-        lon = p["gps_lon"]
-        ele = p["gps_alt"]
-        return (ele >= self.min_ele and ele <= self.max_ele and lat >= self.min_lat and lat <= self.max_lat and lon >= self.min_lon and lon <= self.max_lon)
+        return self.within_box(float(p["gps_lat"]),float(p["gps_lon"]), float(p["gps_alt"]))
 
     def _set_from_gpxpy_track(self, track):
         """
@@ -141,95 +159,83 @@ class SondeObservations(object):
         self.end_time = end_time
 
     def _read_json(self, files):
-        p = []
+        p = dict()
         for filename in files:
             with open(filename, 'rb') as fp:
                 try:
                     log.debug(f"doing {filename}")
                     js = json.loads(fp.read().decode('utf8'))
-                    p.append(js)
+                    #p.append(js)
+                    p = {**p, **js}
                 except Exception as e:
                     log.error(f"file: {filename} {e}")
         return p
 
     def gen_czml(self):
-        pass
+        poslist = self.habhub_positions['positions']['position']
+        vehicles = dict()
+
+        # collect vehicles
+        for p in poslist:
+            vehicles[p['vehicle']] = []
+
+        # collate positions
+        for p in poslist:
+            if self.bbox.habhub_pos_in_bbox(p):
+                vehicles[p['vehicle']].append(p)
+
+        for v, poslist in vehicles.items():
+            l =  len(poslist)
+            if l > 0:
+                log.debug(f"vehicle {v} positions {l}")
 
 
-# python -d habhub.py --habhub-data positions.json foo.json
+
+#  ./radiosonde.py --bbox  10 20 42 48  -d --habhub-data positions.json foo.json
 #  curl --max-time 600 --output positions.json 'https://spacenear.us/tracker/datanew.php?mode=6hours&type=positions&format=json&max_positions=0'
 
-def get_bounds(points):
-    """
-    return bounding box of a list of gpxpy points
-    """
-    min_lat = None
-    max_lat = None
-    min_lon = None
-    max_lon = None
-    min_ele = None
-    max_ele = None
-
-    for point in points:
-        if min_lat is None or point.latitude < min_lat:
-            min_lat = point.latitude
-        if max_lat is None or point.latitude > max_lat:
-            max_lat = point.latitude
-        if min_lon is None or point.longitude < min_lon:
-            min_lon = point.longitude
-        if max_lon is None or point.longitude > max_lon:
-            max_lon = point.longitude
-        if min_ele is None or point.elevation < min_ele:
-            min_ele = point.elevation
-        if max_ele is None or point.elevation > max_ele:
-            max_ele = point.elevation
-
-    if min_lat and max_lat and min_lon and max_lon:
-        return {'min_latitude': min_lat, 'max_latitude': max_lat,
-                'min_longitude': min_lon, 'max_longitude': max_lon,
-                'min_elevation': min_ele, 'max_elevation': max_ele,
-                }
-    return None
-
-
 def main():
-    parser = mod_argparse.ArgumentParser(usage='%(prog)s [-s] [-m] [-d] [json file ...]',
-                                         description='convert  radisonde data to CZML. ')
+    parser = mod_argparse.ArgumentParser(usage='%(prog)s arguments',
+                                         description='convert radisonde data to CZML. ')
 
     parser.add_argument('--habhub-data',
                         dest='hh_files',
                         nargs='+',
-                        metavar='positions.json',
+                        metavar='JSON_FILE',
                         type=str,
                         default=[],
                         help='one or more json files containing habhub positions in JSON format. '
-                        'example: '
+                        'obtain for example with:\n\t'
                         "curl --max-time 600 --output positions.json"
                         " 'https://spacenear.us/tracker/datanew.php?mode=6hours&type=positions&format=json&max_positions=0'")
 
     parser.add_argument('--habhub-receivers', dest='hh_reivers',
-                        metavar='receivers.json',
+                        metavar='JSON_FILE',
                         nargs='+',
                         type=str,
                         default=[],
                         help='one or more json files containing lists of habhub stations. '
-                        "example: curl --output receivers.json 'http://spacenear.us/tracker/receivers.php'")
+                        "obtain for example with: curl --output receivers.json 'http://spacenear.us/tracker/receivers.php'")
 
     parser.add_argument('-d', '--debug',
                         action='store_true',
                         help='show detailed logging')
 
-    parser.add_argument('-b', '--bbox',
+    parser.add_argument('--bbox',
+                        dest='bbox',
                         nargs=4,
+                        metavar=('MINLON', 'MAXLON', 'MINLAT', 'MAXLAT'),
                         default=[0, 360, -90, 90],
-                        help='coordinates of bounding box to convert, example: 14.5 16.8 46 47.5 '
-                        'values: minlon maxlon minlat maxlat')
+                        type=float,
+                        help='coordinates of bounding box to convert, example: --bbox 14.5 16.8 46 47.5')
 
     parser.add_argument('--height-range',
                         nargs=2,
                         default=[0, 100000],
-                        help='lower and upper boundary. example: --height-range 0 6000 '
-                        'values: minheight maxheight')
+                        type=float,
+                        metavar=('LOWER_BOUNDARY', 'UPPER_BOUNDARY'),
+                        help='lower and upper boundary. example: --height-range 0 6000')
+
     args, files = parser.parse_known_args()
 
     global debug
@@ -250,13 +256,7 @@ def main():
                            habhub_receivers=args.hh_reivers,
                            bbox=bbox)
 
-    if False:
-        fn = "Stiwoll-Muggauberg.gpx"
-        with open(fn, 'r') as gpx_file:
-            gpx = gpxpy.parse(gpx_file)
-            for t in gpx.tracks:
-                bbox = BoundingBox(gpxpy_track=t)
-                log.debug(f"fn={fn} bbox={bbox}")
+    so.gen_czml()
 
     sys.exit(0)
 
@@ -283,7 +283,13 @@ def main():
     #
     # print(len(tv))
     #  python habhub.py|sort -rn|less
-
+    # if False:
+    #     fn = "Stiwoll-Muggauberg.gpx"
+    #     with open(fn, 'r') as gpx_file:
+    #         gpx = gpxpy.parse(gpx_file)
+    #         for t in gpx.tracks:
+    #             bbox = BoundingBox(gpxpy_track=t)
+    #             log.debug(f"fn={fn} bbox={bbox}")
 
 if __name__ == "__main__":
     main()
